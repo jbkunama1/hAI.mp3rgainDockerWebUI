@@ -1,0 +1,19 @@
+version: "3.8"
+
+services:
+  mp3rgain-webui:
+    build: .
+    container_name: mp3rgain-webui
+    ports:
+      - "8099:8099"
+    environment:
+      - TZ=Europe/Berlin
+      - APP_PORT=8099
+      - INPUT_DIR=/music/in
+      - OUTPUT_DIR=/music/out
+      - TEMP_DIR=/tmp/mp3rgain-jobs
+      - MAX_CONTENT_LENGTH=2147483648
+    volumes:
+      - ./data:/app/data
+      - /volume1/music:/music
+    restart: unless-stopped
