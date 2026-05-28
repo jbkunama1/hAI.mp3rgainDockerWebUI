@@ -3,20 +3,22 @@ import shutil
 import subprocess
 import uuid
 import zipfile
+import json
+import re
 from pathlib import Path
 from datetime import datetime
-from flask import Flask, request, redirect, url_for, render_template_string, send_file, flash
+from flask import Flask, request, redirect, url_for, render_template_string, send_file, flash, session, jsonify
 from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
-app.secret_key = 'mp3rgain-webui-secret'
+app.secret_key = 'mp3rgain-webui-secret-2024'
 app.config['MAX_CONTENT_LENGTH'] = int(os.environ.get('MAX_CONTENT_LENGTH', 2 * 1024 * 1024 * 1024))
 
 APP_PORT = int(os.environ.get('APP_PORT', '8099'))
 INPUT_DIR = Path(os.environ.get('INPUT_DIR', '/music/in'))
 OUTPUT_DIR = Path(os.environ.get('OUTPUT_DIR', '/music/out'))
 TEMP_DIR = Path(os.environ.get('TEMP_DIR', '/tmp/mp3rgain-jobs'))
-TARGET_DB = int(os.environ.get('TARGET_DB', '101'))
+DEFAULT_TARGET_DB = int(os.environ.get('TARGET_DB', '101'))
 ALLOWED_EXTENSIONS = {'.mp3'}
 
 for p in (INPUT_DIR, OUTPUT_DIR, TEMP_DIR):
@@ -30,142 +32,215 @@ TEMPLATE = """
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>mp3rgain WebUI</title>
   <style>
-    :root { --bg:#0f172a; --panel:#111827; --panel2:#1f2937; --text:#e5e7eb; --muted:#94a3b8; --line:#334155; --primary:#14b8a6; --radius:16px; }
-    *{box-sizing:border-box} body{margin:0;font-family:Inter,Arial,sans-serif;background:linear-gradient(180deg,#020617,#0f172a);color:var(--text)}
-    .wrap{max-width:1100px;margin:0 auto;padding:24px}
+    :root{--bg:#0f172a;--panel:#111827;--panel2:#1f2937;--text:#e5e7eb;--muted:#94a3b8;--line:#334155;--primary:#14b8a6;--warn:#f59e0b;--danger:#ef4444;--radius:16px}
+    *{box-sizing:border-box}body{margin:0;font-family:Inter,Arial,sans-serif;background:linear-gradient(180deg,#020617,#0f172a);color:var(--text)}
+    .wrap{max-width:1200px;margin:0 auto;padding:24px}
     .hero{display:flex;justify-content:space-between;gap:16px;align-items:center;margin-bottom:24px;flex-wrap:wrap}
-    .hero h1{margin:0;font-size:clamp(1.8rem,3vw,2.6rem)} .hero p{margin:.4rem 0 0;color:var(--muted)}
-    .grid{display:grid;grid-template-columns:1.3fr .9fr;gap:20px}
-    .card{background:rgba(17,24,39,.88);border:1px solid var(--line);border-radius:var(--radius);padding:20px;box-shadow:0 10px 30px rgba(0,0,0,.25)}
-    h2{margin:0 0 12px;font-size:1.15rem} h3{margin:18px 0 10px;font-size:1rem}
-    .row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px}
-    label{display:block;font-size:.92rem;color:#cbd5e1;margin-bottom:6px}
-    input[type=text],input[type=number],select{width:100%;padding:12px 14px;border-radius:12px;border:1px solid var(--line);background:var(--panel2);color:var(--text)}
-    input[type=file]{width:100%;padding:12px;border:1px dashed #475569;border-radius:12px;background:#0b1220;color:var(--muted)}
-    .hint{font-size:.88rem;color:var(--muted)} .actions{display:flex;gap:12px;flex-wrap:wrap;margin-top:18px}
-    button,.btn{background:var(--primary);color:#042f2e;border:none;border-radius:12px;padding:12px 16px;font-weight:700;text-decoration:none;display:inline-block;cursor:pointer}
-    .btn.secondary{background:#334155;color:var(--text)}
-    .flash{padding:12px 14px;border-radius:12px;margin-bottom:12px;background:#172554;border:1px solid #3730a3}
-    table{width:100%;border-collapse:collapse} th,td{padding:10px 8px;border-bottom:1px solid #263244;text-align:left;font-size:.93rem;vertical-align:top}
-    code{background:#0b1220;padding:2px 6px;border-radius:8px;color:#99f6e4}
-    .tag{display:inline-block;padding:4px 8px;border-radius:999px;background:#0f766e22;color:#99f6e4;border:1px solid #134e4a;font-size:.78rem}
-    .muted{color:var(--muted)}
-    @media(max-width:880px){.grid,.row{grid-template-columns:1fr}}
+    .hero h1{margin:0;font-size:clamp(1.6rem,3vw,2.4rem)}.hero p{margin:.4rem 0 0;color:var(--muted)}
+    .card{background:rgba(17,24,39,.9);border:1px solid var(--line);border-radius:var(--radius);padding:20px;box-shadow:0 10px 30px rgba(0,0,0,.3);margin-bottom:20px}
+    h2{margin:0 0 16px;font-size:1.1rem;display:flex;align-items:center;gap:8px}
+    .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+    .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px}
+    label{display:block;font-size:.9rem;color:#cbd5e1;margin-bottom:6px;font-weight:500}
+    input[type=text],input[type=number],select,textarea{width:100%;padding:11px 14px;border-radius:12px;border:1px solid var(--line);background:var(--panel2);color:var(--text);font-size:.95rem}
+    input[type=file]{width:100%;padding:12px;border:2px dashed #475569;border-radius:12px;background:#0b1220;color:var(--muted)}
+    .btn{display:inline-flex;align-items:center;gap:6px;padding:11px 18px;border-radius:12px;border:none;font-weight:700;cursor:pointer;text-decoration:none;font-size:.95rem}
+    .btn-primary{background:var(--primary);color:#042f2e}
+    .btn-secondary{background:#334155;color:var(--text)}
+    .btn-warn{background:var(--warn);color:#1c1917}
+    .btn-danger{background:var(--danger);color:#fff}
+    .actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}
+    .flash{padding:12px 16px;border-radius:12px;margin-bottom:14px;background:#172554;border:1px solid #3730a3}
+    .flash.ok{background:#052e16;border-color:#166534}
+    table{width:100%;border-collapse:collapse}
+    th,td{padding:10px 8px;border-bottom:1px solid #1e2d3d;text-align:left;font-size:.9rem;vertical-align:middle}
+    th{color:var(--muted);font-weight:600;font-size:.82rem;text-transform:uppercase;letter-spacing:.05em}
+    code{background:#0b1220;padding:2px 7px;border-radius:8px;color:#99f6e4;font-size:.88rem}
+    .badge{display:inline-block;padding:3px 9px;border-radius:999px;font-size:.78rem;font-weight:600}
+    .badge-ok{background:#052e16;color:#4ade80;border:1px solid #166534}
+    .badge-warn{background:#451a03;color:#fbbf24;border:1px solid #92400e}
+    .badge-muted{background:#1e293b;color:var(--muted);border:1px solid var(--line)}
+    .tag{display:inline-block;padding:4px 10px;border-radius:999px;background:#0f766e22;color:#99f6e4;border:1px solid #134e4a;font-size:.78rem}
+    .sep{border:none;border-top:1px solid var(--line);margin:20px 0}
+    .db-bar-wrap{background:#1e293b;border-radius:999px;height:8px;width:120px;display:inline-block;vertical-align:middle;margin-left:8px}
+    .db-bar{height:8px;border-radius:999px;background:var(--primary)}
+    .step-header{display:flex;align-items:center;gap:12px;margin-bottom:16px}
+    .step-num{width:28px;height:28px;border-radius:50%;background:var(--primary);color:#042f2e;font-weight:800;display:flex;align-items:center;justify-content:center;font-size:.9rem;flex-shrink:0}
+    .hint{font-size:.85rem;color:var(--muted);margin-top:4px}
+    @media(max-width:800px){.grid2,.grid3{grid-template-columns:1fr}}
   </style>
 </head>
 <body>
-  <div class="wrap">
-    <div class="hero">
-      <div><h1>mp3rgain WebUI</h1><p>Verlustlose MP3-Lautstaerkeanpassung - Ordner-Mount, Upload, Stapelverarbeitung, ZIP-Download.</p></div>
-      <div class="tag">Port {{ port }} &nbsp;|&nbsp; Ziel: {{ target_db }} dB</div>
-    </div>
-    {% with messages = get_flashed_messages() %}{% if messages %}{% for msg in messages %}<div class="flash">{{ msg }}</div>{% endfor %}{% endif %}{% endwith %}
-    <div class="grid">
-      <div class="card">
-        <h2>Verarbeitung starten</h2>
-        <form action="/process" method="post" enctype="multipart/form-data">
-          <div class="row">
-            <div>
-              <label>Modus</label>
-              <select name="mode">
-                <option value="track">Track Gain (-r)</option>
-                <option value="album">Album Gain (-a)</option>
-                <option value="undo">Undo (-u)</option>
-              </select>
-            </div>
-            <div>
-              <label>Quelle</label>
-              <select name="source_type" onchange="toggleSource(this.value)">
-                <option value="mounted">Gemounteter Eingabeordner</option>
-                <option value="upload">Datei-Upload</option>
-              </select>
-            </div>
-            <div>
-              <label>Ziel-dB (leer = {{ target_db }} dB)</label>
-              <input type="number" name="target_db" placeholder="{{ target_db }}" min="60" max="120">
-            </div>
-          </div>
-          <div id="mounted-box">
-            <h3>Gemounteter Ordner</h3>
-            <label>Relativer Unterordner in <code>{{ input_dir }}</code> (leer = alles)</label>
-            <input type="text" name="subdir" placeholder="z. B. alben/neu">
-            <p class="hint">Rekursiv alle .mp3-Dateien werden verarbeitet.</p>
-          </div>
-          <div id="upload-box" style="display:none">
-            <h3>Datei-Upload</h3>
-            <label>MP3-Dateien auswaehlen</label>
-            <input type="file" name="files" accept=".mp3,audio/mpeg" multiple>
-            <p class="hint">Mehrfachauswahl moeglich.</p>
-          </div>
-          <div class="actions">
-            <button type="submit">Job starten</button>
-            <a class="btn secondary" href="/">Aktualisieren</a>
-          </div>
-        </form>
-      </div>
-      <div class="card">
-        <h2>Pfad-Konzept</h2>
-        <table>
-          <tr><th>Eingabe</th><td><code>{{ input_dir }}</code></td></tr>
-          <tr><th>Ausgabe</th><td><code>{{ output_dir }}</code></td></tr>
-          <tr><th>Standard-dB</th><td><code>{{ target_db }} dB</code> (via TARGET_DB)</td></tr>
-          <tr><th>Originale</th><td>Bleiben unveraendert - wird immer in Job-Ordner kopiert</td></tr>
-        </table>
-        <h3>Ablauf</h3>
-        <table>
-          <tr><td>1.</td><td>MP3s in Eingabeordner legen oder hochladen</td></tr>
-          <tr><td>2.</td><td>Modus und Ziel-dB waehlen, Job starten</td></tr>
-          <tr><td>3.</td><td>ZIP herunterladen</td></tr>
-        </table>
-      </div>
-    </div>
-    <div class="card" style="margin-top:20px">
-      <h2>Ergebnisse</h2>
-      {% if jobs %}
-      <table>
-        <thead><tr><th>Zeit</th><th>Job-ID</th><th>Modus</th><th>dB</th><th>Dateien</th><th>Download</th></tr></thead>
-        <tbody>
-          {% for job in jobs %}
-          <tr>
-            <td>{{ job.created }}</td>
-            <td><code>{{ job.id }}</code></td>
-            <td>{{ job.mode }}</td>
-            <td>{{ job.target_db }}</td>
-            <td>{{ job.count }}</td>
-            <td><a class="btn secondary" href="/download/{{ job.id }}">ZIP laden</a></td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-      {% else %}<p class="muted">Noch keine Jobs vorhanden.</p>{% endif %}
-    </div>
+<div class="wrap">
+  <div class="hero">
+    <div><h1>&#127911; mp3rgain WebUI</h1><p>Verlustlose MP3-Lautstärkeanpassung &ndash; Analyse &rarr; Ziel setzen &rarr; Anwenden</p></div>
+    <div class="tag">Port {{ port }}</div>
   </div>
-  <script>
-    function toggleSource(v){
-      document.getElementById('mounted-box').style.display=v==='mounted'?'block':'none';
-      document.getElementById('upload-box').style.display=v==='upload'?'block':'none';
-    }
-  </script>
-</body>
-</html>
+
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}{% for cat,msg in messages %}<div class="flash {{ cat }}">{{ msg }}</div>{% endfor %}{% endif %}
+  {% endwith %}
+
+  <!-- SCHRITT 1: ANALYSE -->
+  <div class="card">
+    <div class="step-header"><div class="step-num">1</div><h2 style="margin:0">Dateien analysieren</h2></div>
+    <form action="/analyze" method="post" enctype="multipart/form-data">
+      <div class="grid2">
+        <div>
+          <label>Quelle</label>
+          <select name="source_type" id="src" onchange="toggleSrc(this.value)">
+            <option value="mounted">Gemounteter Eingabeordner</option>
+            <option value="upload">Datei-Upload</option>
+          </select>
+        </div>
+        <div id="box-subdir">
+          <label>Unterordner in <code>{{ input_dir }}</code> (leer = alles)</label>
+          <input type="text" name="subdir" placeholder="z. B. alben/2024">
+        </div>
+        <div id="box-upload" style="display:none">
+          <label>MP3-Dateien hochladen</label>
+          <input type="file" name="files" accept=".mp3,audio/mpeg" multiple>
+        </div>
+      </div>
+      <div class="actions">
+        <button class="btn btn-primary" type="submit">&#128269; Analysieren</button>
+      </div>
+    </form>
+  </div>
+
+  <!-- SCHRITT 2: ERGEBNIS + ANWENDEN -->
+  {% if analysis %}
+  <div class="card">
+    <div class="step-header"><div class="step-num">2</div><h2 style="margin:0">Analyseergebnis &amp; Ziel festlegen</h2></div>
+    <table>
+      <thead><tr><th>Datei</th><th>Ist-Lautstärke</th><th>Diff zu Ziel</th><th>Clipping?</th></tr></thead>
+      <tbody>
+        {% for f in analysis.files %}
+        <tr>
+          <td><code>{{ f.name }}</code></td>
+          <td>
+            {{ f.db }} dB
+            <span class="db-bar-wrap"><span class="db-bar" style="width:{{ [[(f.db|float) / 110 * 100, 0]|max, 100]|min }}%"></span></span>
+          </td>
+          <td>
+            {% if f.diff > 0 %}<span class="badge badge-warn">+{{ f.diff }} dB</span>
+            {% elif f.diff < 0 %}<span class="badge badge-ok">{{ f.diff }} dB</span>
+            {% else %}<span class="badge badge-muted">= Ziel</span>{% endif %}
+          </td>
+          <td>{% if f.clipping %}<span class="badge badge-warn">&#9888; Ja</span>{% else %}<span class="badge badge-muted">Nein</span>{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <hr class="sep">
+    <form action="/apply" method="post">
+      <input type="hidden" name="session_id" value="{{ analysis.session_id }}">
+      <div class="grid3">
+        <div>
+          <label>Ziel-dB</label>
+          <input type="number" name="target_db" value="{{ default_target_db }}" min="60" max="120" required>
+          <p class="hint">Standard: {{ default_target_db }} dB (via TARGET_DB)</p>
+        </div>
+        <div>
+          <label>Modus</label>
+          <select name="mode">
+            <option value="track">Track Gain &ndash; jede Datei einzeln</option>
+            <option value="album">Album Gain &ndash; alle als Album</option>
+            <option value="undo">Undo &ndash; Rückgängig machen</option>
+          </select>
+        </div>
+        <div style="display:flex;flex-direction:column;justify-content:flex-end">
+          <div class="actions" style="margin-top:0">
+            <button class="btn btn-warn" type="submit">&#9889; Anwenden</button>
+            <a class="btn btn-secondary" href="/">Abbrechen</a>
+          </div>
+        </div>
+      </div>
+    </form>
+  </div>
+  {% endif %}
+
+  <!-- ERGEBNISSE -->
+  <div class="card">
+    <h2>&#128230; Abgeschlossene Jobs</h2>
+    {% if jobs %}
+    <table>
+      <thead><tr><th>Zeit</th><th>Modus</th><th>Ziel-dB</th><th>Dateien</th><th>Download</th></tr></thead>
+      <tbody>
+        {% for job in jobs %}
+        <tr>
+          <td>{{ job.created }}</td>
+          <td><span class="badge badge-muted">{{ job.mode }}</span></td>
+          <td><code>{{ job.target_db }} dB</code></td>
+          <td>{{ job.count }}</td>
+          <td><a class="btn btn-secondary" style="padding:6px 12px;font-size:.85rem" href="/download/{{ job.id }}">&#11123; ZIP</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}<p style="color:var(--muted)">Noch keine Jobs vorhanden.</p>{% endif %}
+  </div>
+</div>
+<script>
+function toggleSrc(v){
+  document.getElementById('box-subdir').style.display=v==='mounted'?'block':'none';
+  document.getElementById('box-upload').style.display=v==='upload'?'block':'none';
+}
+</script>
+</body></html>
 """
 
-def list_jobs():
-    jobs = []
-    for meta in sorted(OUTPUT_DIR.glob('job-*/meta.txt'), reverse=True):
-        root = meta.parent
-        data = {}
-        for line in meta.read_text(encoding='utf-8').splitlines():
-            if '=' in line:
-                k, v = line.split('=', 1)
-                data[k] = v
-        jobs.append({'id': data.get('job_id', root.name), 'created': data.get('created', ''),
-                     'mode': data.get('mode', ''), 'count': data.get('count', '0'),
-                     'target_db': data.get('target_db', '?')})
-    return jobs
+# ── Helpers ──────────────────────────────────────────────────────────────────
 
 def gather_mp3s(base):
     return [p for p in base.rglob('*') if p.is_file() and p.suffix.lower() in ALLOWED_EXTENSIONS]
+
+def analyze_files(files):
+    """Run mp3rgain -s s (show info only, no changes) and parse output."""
+    results = []
+    for f in files:
+        try:
+            out = subprocess.run(
+                ['mp3rgain', '-s', 's', str(f)],
+                capture_output=True, text=True
+            )
+            combined = out.stdout + out.stderr
+            db_val = None
+            clipping = False
+            # mp3rgain outputs lines like: filename\tMP3 gain\tdB gain\tmax amplitude\tmax global_gain\tmin global_gain
+            for line in combined.splitlines():
+                if str(f.name) in line or str(f) in line:
+                    parts = line.split('\t')
+                    if len(parts) >= 3:
+                        try:
+                            db_val = round(float(parts[2]), 1)
+                        except ValueError:
+                            pass
+                if 'clipping' in line.lower() or 'clip' in line.lower():
+                    clipping = True
+            # fallback: try regex
+            if db_val is None:
+                m = re.search(r'([\-\d\.]+)\s*dB', combined)
+                if m:
+                    db_val = round(float(m.group(1)), 1)
+            results.append({
+                'name': f.name,
+                'path': str(f),
+                'db': db_val if db_val is not None else '?',
+                'clipping': clipping,
+                'diff': '?'
+            })
+        except Exception as e:
+            results.append({'name': f.name, 'path': str(f), 'db': '?', 'clipping': False, 'diff': '?'})
+    return results
+
+def compute_diffs(results, target_db):
+    for r in results:
+        try:
+            r['diff'] = round(target_db - float(r['db']), 1)
+        except (TypeError, ValueError):
+            r['diff'] = '?'
+    return results
 
 def run_mp3rgain(mode, files, target_db):
     cmd = ['mp3rgain', f'-d{target_db}']
@@ -186,74 +261,131 @@ def zip_dir(src, dest):
             if file.is_file():
                 zf.write(file, file.relative_to(src))
 
+def list_jobs():
+    jobs = []
+    for meta in sorted(OUTPUT_DIR.glob('job-*/meta.txt'), reverse=True):
+        data = {}
+        for line in meta.read_text(encoding='utf-8').splitlines():
+            if '=' in line:
+                k, v = line.split('=', 1)
+                data[k] = v
+        jobs.append({'id': data.get('job_id', meta.parent.name),
+                     'created': data.get('created', ''),
+                     'mode': data.get('mode', ''),
+                     'count': data.get('count', '0'),
+                     'target_db': data.get('target_db', '?')})
+    return jobs
+
+# ── Session-based temp file store ─────────────────────────────────────────────
+
+def save_session_files(session_id, file_paths):
+    p = TEMP_DIR / f'session-{session_id}.json'
+    p.write_text(json.dumps([str(x) for x in file_paths]), encoding='utf-8')
+
+def load_session_files(session_id):
+    p = TEMP_DIR / f'session-{session_id}.json'
+    if not p.exists():
+        return []
+    return [Path(x) for x in json.loads(p.read_text(encoding='utf-8'))]
+
+# ── Routes ────────────────────────────────────────────────────────────────────
+
 @app.route('/')
 def index():
-    return render_template_string(TEMPLATE, jobs=list_jobs(),
-                                  input_dir=INPUT_DIR, output_dir=OUTPUT_DIR,
-                                  port=APP_PORT, target_db=TARGET_DB)
+    return render_template_string(TEMPLATE,
+        jobs=list_jobs(), analysis=None,
+        input_dir=INPUT_DIR, port=APP_PORT,
+        default_target_db=DEFAULT_TARGET_DB)
 
-@app.route('/process', methods=['POST'])
-def process():
-    mode = request.form.get('mode', 'track')
+@app.route('/analyze', methods=['POST'])
+def analyze():
     source_type = request.form.get('source_type', 'mounted')
+    session_id = uuid.uuid4().hex
+    work_dir = TEMP_DIR / f'session-{session_id}-files'
+    work_dir.mkdir(parents=True, exist_ok=True)
+
+    if source_type == 'mounted':
+        subdir = (request.form.get('subdir') or '').strip().strip('/')
+        source = (INPUT_DIR / subdir if subdir else INPUT_DIR).resolve()
+        if not str(source).startswith(str(INPUT_DIR.resolve())) or not source.exists():
+            flash('Ungueltiger Eingabepfad.', 'error')
+            return redirect(url_for('index'))
+        src_files = gather_mp3s(source)
+        if not src_files:
+            flash('Keine MP3-Dateien gefunden.', 'error')
+            return redirect(url_for('index'))
+        for f in src_files:
+            rel = f.relative_to(source)
+            dest = work_dir / rel
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(f, dest)
+    else:
+        uploads = request.files.getlist('files')
+        saved = 0
+        for up in uploads:
+            if not up or not up.filename: continue
+            name = secure_filename(Path(up.filename).name)
+            if Path(name).suffix.lower() not in ALLOWED_EXTENSIONS: continue
+            up.save(work_dir / name)
+            saved += 1
+        if saved == 0:
+            flash('Keine gueltigen MP3-Dateien hochgeladen.', 'error')
+            return redirect(url_for('index'))
+
+    files = gather_mp3s(work_dir)
+    results = analyze_files(files)
+    results = compute_diffs(results, DEFAULT_TARGET_DB)
+    save_session_files(session_id, [r['path'] for r in results])
+
+    analysis = {'session_id': session_id, 'files': results}
+    return render_template_string(TEMPLATE,
+        jobs=list_jobs(), analysis=analysis,
+        input_dir=INPUT_DIR, port=APP_PORT,
+        default_target_db=DEFAULT_TARGET_DB)
+
+@app.route('/apply', methods=['POST'])
+def apply():
+    session_id = request.form.get('session_id', '')
+    mode = request.form.get('mode', 'track')
     try:
-        target_db = int(request.form.get('target_db') or TARGET_DB)
+        target_db = int(request.form.get('target_db') or DEFAULT_TARGET_DB)
         target_db = max(60, min(120, target_db))
     except ValueError:
-        target_db = TARGET_DB
+        target_db = DEFAULT_TARGET_DB
+
+    files = load_session_files(session_id)
+    if not files:
+        flash('Session abgelaufen oder nicht gefunden. Bitte erneut analysieren.', 'error')
+        return redirect(url_for('index'))
+
     job_id = f'job-{datetime.now().strftime("%Y%m%d-%H%M%S")}-{uuid.uuid4().hex[:6]}'
     job_dir = OUTPUT_DIR / job_id
-    work_input = TEMP_DIR / job_id / 'input'
-    work_input.mkdir(parents=True, exist_ok=True)
     job_dir.mkdir(parents=True, exist_ok=True)
+
     try:
-        if source_type == 'mounted':
-            subdir = (request.form.get('subdir') or '').strip().strip('/')
-            source = (INPUT_DIR / subdir if subdir else INPUT_DIR).resolve()
-            if not str(source).startswith(str(INPUT_DIR.resolve())) or not source.exists():
-                flash('Ungueltiger Eingabepfad.')
-                return redirect(url_for('index'))
-            files = gather_mp3s(source)
-            if not files:
-                flash('Keine MP3-Dateien gefunden.')
-                return redirect(url_for('index'))
-            for f in files:
-                rel = f.relative_to(source)
-                dest = work_input / rel
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(f, dest)
-        else:
-            uploads = request.files.getlist('files')
-            saved = 0
-            for up in uploads:
-                if not up or not up.filename: continue
-                name = secure_filename(Path(up.filename).name)
-                if Path(name).suffix.lower() not in ALLOWED_EXTENSIONS: continue
-                up.save(work_input / name)
-                saved += 1
-            if saved == 0:
-                flash('Keine gueltigen MP3-Dateien hochgeladen.')
-                return redirect(url_for('index'))
-        files = gather_mp3s(work_input)
         run_mp3rgain(mode, files, target_db)
+        src_dir = Path(files[0]).parent
         out_files = job_dir / 'files'
-        shutil.copytree(work_input, out_files, dirs_exist_ok=True)
+        shutil.copytree(src_dir, out_files, dirs_exist_ok=True)
         write_meta(job_dir, job_id, mode, len(files), target_db)
         zip_dir(out_files, job_dir / f'{job_id}.zip')
-        flash(f'Job {job_id} abgeschlossen: {len(files)} Datei(en) @ {target_db} dB.')
+        flash(f'Job {job_id}: {len(files)} Datei(en) auf {target_db} dB normiert.', 'ok')
     except subprocess.CalledProcessError as e:
-        flash(f'mp3rgain-Fehler: {e}')
+        flash(f'mp3rgain-Fehler: {e}', 'error')
     except Exception as e:
-        flash(f'Fehler: {e}')
+        flash(f'Fehler: {e}', 'error')
     finally:
-        shutil.rmtree(TEMP_DIR / job_id, ignore_errors=True)
+        shutil.rmtree(TEMP_DIR / f'session-{session_id}-files', ignore_errors=True)
+        sess_json = TEMP_DIR / f'session-{session_id}.json'
+        if sess_json.exists(): sess_json.unlink()
+
     return redirect(url_for('index'))
 
 @app.route('/download/<job_id>')
 def download(job_id):
     zip_path = OUTPUT_DIR / job_id / f'{job_id}.zip'
     if not zip_path.exists():
-        flash('ZIP nicht gefunden.')
+        flash('ZIP nicht gefunden.', 'error')
         return redirect(url_for('index'))
     return send_file(zip_path, as_attachment=True, download_name=zip_path.name)
 
