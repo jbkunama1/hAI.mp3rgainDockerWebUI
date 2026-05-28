@@ -18,6 +18,8 @@ WORKDIR /app
 RUN pip install --no-cache-dir flask==3.1.1 werkzeug==3.1.3
 
 COPY app.py /app/app.py
+COPY logo_mp3gainUI.png /app/logo_mp3gainUI.png
+COPY banner_mp3gain.png /app/banner_mp3gain.png
 
 EXPOSE 8099
 
