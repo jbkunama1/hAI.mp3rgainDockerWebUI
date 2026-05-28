@@ -4,14 +4,14 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
+# System-Deps + mp3rgain v2.7.3 via .deb (kein tar nötig, robuster)
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl ca-certificates tar \
+    && apt-get install -y --no-install-recommends curl ca-certificates \
+    && curl -fsSL https://github.com/M-Igashi/mp3rgain/releases/download/v2.7.3/mp3rgain_2.7.3-1_amd64.deb \
+       -o /tmp/mp3rgain.deb \
+    && apt-get install -y --no-install-recommends /tmp/mp3rgain.deb \
+    && rm /tmp/mp3rgain.deb \
     && rm -rf /var/lib/apt/lists/*
-
-RUN curl -L https://github.com/M-Igashi/mp3rgain/releases/latest/download/mp3rgain-v1.2.0-linux-x86_64.tar.gz -o /tmp/mp3rgain.tar.gz \
-    && tar -xzf /tmp/mp3rgain.tar.gz -C /usr/local/bin \
-    && chmod +x /usr/local/bin/mp3rgain \
-    && rm /tmp/mp3rgain.tar.gz
 
 WORKDIR /app
 
