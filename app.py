@@ -76,6 +76,9 @@ TEMPLATE = """
     .jobs-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:8px}
     .jobs-header h2{margin:0}
     .autodel-info{font-size:.82rem;color:var(--muted);margin-top:6px}
+    details summary{cursor:pointer;color:var(--primary);font-size:.85rem;font-weight:600}
+    details ul{margin:6px 0 0;padding-left:16px;font-size:.82rem;color:#99f6e4;list-style:disc}
+    details ul li{margin-bottom:2px}
     @media(max-width:800px){.grid2,.grid3{grid-template-columns:1fr}}
   </style>
 </head>
@@ -188,14 +191,25 @@ TEMPLATE = """
     </div>
     {% if jobs %}
     <table>
-      <thead><tr><th>Zeit</th><th>Modus</th><th>Ziel-dB</th><th>Dateien</th><th>Alter</th><th>Aktionen</th></tr></thead>
+      <thead><tr><th>Zeit</th><th>Modus</th><th>Ziel-dB</th><th>Songs</th><th>Alter</th><th>Aktionen</th></tr></thead>
       <tbody>
         {% for job in jobs %}
         <tr>
           <td>{{ job.created }}</td>
           <td><span class="badge badge-muted">{{ job.mode }}</span></td>
           <td><code>{{ job.target_db }} dB</code></td>
-          <td>{{ job.count }}</td>
+          <td>
+            <details>
+              <summary>{{ job.count }} Song(s)</summary>
+              <ul>
+                {% for fname in job.file_names %}
+                  <li><code>{{ fname }}</code></li>
+                {% else %}
+                  <li style="color:var(--muted)">Keine Dateien gefunden</li>
+                {% endfor %}
+              </ul>
+            </details>
+          </td>
           <td><span class="badge badge-age">{{ job.age }}</span></td>
           <td style="display:flex;gap:8px;flex-wrap:wrap">
             <a class="btn btn-secondary btn-sm" href="/download/{{ job.id }}">&#11123; ZIP</a>
@@ -344,13 +358,20 @@ def list_jobs():
                 k, v = line.split('=', 1)
                 data[k] = v
         created = data.get('created', '')
+        job_id  = data.get('job_id', meta.parent.name)
+
+        # Dateinamen aus dem files/-Unterordner auslesen
+        files_dir  = meta.parent / 'files'
+        file_names = sorted([f.name for f in files_dir.rglob('*.mp3')]) if files_dir.exists() else []
+
         jobs.append({
-            'id':        data.get('job_id', meta.parent.name),
-            'created':   created,
-            'mode':      data.get('mode', ''),
-            'count':     data.get('count', '0'),
-            'target_db': data.get('target_db', '?'),
-            'age':       job_age_label(created),
+            'id':         job_id,
+            'created':    created,
+            'mode':       data.get('mode', ''),
+            'count':      data.get('count', '0'),
+            'target_db':  data.get('target_db', '?'),
+            'age':        job_age_label(created),
+            'file_names': file_names,
         })
     return jobs
 
