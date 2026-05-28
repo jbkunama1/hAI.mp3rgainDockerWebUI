@@ -5,8 +5,10 @@ import uuid
 import zipfile
 import json
 import re
+import threading
+import time
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 from flask import Flask, request, redirect, url_for, render_template_string, send_file, flash
 from werkzeug.utils import secure_filename
 
@@ -14,11 +16,12 @@ app = Flask(__name__)
 app.secret_key = 'mp3rgain-webui-secret-2024'
 app.config['MAX_CONTENT_LENGTH'] = int(os.environ.get('MAX_CONTENT_LENGTH', 2 * 1024 * 1024 * 1024))
 
-APP_PORT    = int(os.environ.get('APP_PORT', '8099'))
-INPUT_DIR   = Path(os.environ.get('INPUT_DIR',  '/music/in'))
-OUTPUT_DIR  = Path(os.environ.get('OUTPUT_DIR', '/music/out'))
-TEMP_DIR    = Path(os.environ.get('TEMP_DIR',   '/tmp/mp3rgain-jobs'))
-DEFAULT_TARGET_DB = int(os.environ.get('TARGET_DB', '101'))
+APP_PORT          = int(os.environ.get('APP_PORT', '8099'))
+INPUT_DIR         = Path(os.environ.get('INPUT_DIR',  '/music/in'))
+OUTPUT_DIR        = Path(os.environ.get('OUTPUT_DIR', '/music/out'))
+TEMP_DIR          = Path(os.environ.get('TEMP_DIR',   '/tmp/mp3rgain-jobs'))
+DEFAULT_TARGET_DB = int(os.environ.get('TARGET_DB',   '101'))
+JOB_MAX_AGE_DAYS  = int(os.environ.get('JOB_MAX_AGE_DAYS', '7'))
 ALLOWED_EXTENSIONS = {'.mp3'}
 
 for p in (INPUT_DIR, OUTPUT_DIR, TEMP_DIR):
@@ -62,6 +65,7 @@ TEMPLATE = """
     .badge-ok{background:#052e16;color:#4ade80;border:1px solid #166534}
     .badge-warn{background:#451a03;color:#fbbf24;border:1px solid #92400e}
     .badge-muted{background:#1e293b;color:var(--muted);border:1px solid var(--line)}
+    .badge-age{background:#1e1b4b;color:#a5b4fc;border:1px solid #3730a3;font-size:.75rem}
     .tag{display:inline-block;padding:4px 10px;border-radius:999px;background:#0f766e22;color:#99f6e4;border:1px solid #134e4a;font-size:.78rem}
     .sep{border:none;border-top:1px solid var(--line);margin:20px 0}
     .db-bar-wrap{background:#1e293b;border-radius:999px;height:8px;width:120px;display:inline-block;vertical-align:middle;margin-left:8px}
@@ -69,8 +73,9 @@ TEMPLATE = """
     .step-header{display:flex;align-items:center;gap:12px;margin-bottom:16px}
     .step-num{width:28px;height:28px;border-radius:50%;background:var(--primary);color:#042f2e;font-weight:800;display:flex;align-items:center;justify-content:center;font-size:.9rem;flex-shrink:0}
     .hint{font-size:.85rem;color:var(--muted);margin-top:4px}
-    .jobs-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
+    .jobs-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:8px}
     .jobs-header h2{margin:0}
+    .autodel-info{font-size:.82rem;color:var(--muted);margin-top:6px}
     @media(max-width:800px){.grid2,.grid3{grid-template-columns:1fr}}
   </style>
 </head>
@@ -171,7 +176,10 @@ TEMPLATE = """
   <!-- JOBS -->
   <div class="card">
     <div class="jobs-header">
-      <h2>&#128230; Abgeschlossene Jobs</h2>
+      <div>
+        <h2>&#128230; Abgeschlossene Jobs</h2>
+        <p class="autodel-info">&#128465; Automatische L&ouml;schung nach {{ max_age_days }} Tagen &bull; konfigurierbar via <code>JOB_MAX_AGE_DAYS</code></p>
+      </div>
       {% if jobs %}
       <form action="/delete_all_jobs" method="post" onsubmit="return confirm('Wirklich alle Jobs l\u00f6schen?')">
         <button class="btn btn-danger btn-sm" type="submit">&#128465; Alle l&ouml;schen</button>
@@ -180,7 +188,7 @@ TEMPLATE = """
     </div>
     {% if jobs %}
     <table>
-      <thead><tr><th>Zeit</th><th>Modus</th><th>Ziel-dB</th><th>Dateien</th><th>Aktionen</th></tr></thead>
+      <thead><tr><th>Zeit</th><th>Modus</th><th>Ziel-dB</th><th>Dateien</th><th>Alter</th><th>Aktionen</th></tr></thead>
       <tbody>
         {% for job in jobs %}
         <tr>
@@ -188,6 +196,7 @@ TEMPLATE = """
           <td><span class="badge badge-muted">{{ job.mode }}</span></td>
           <td><code>{{ job.target_db }} dB</code></td>
           <td>{{ job.count }}</td>
+          <td><span class="badge badge-age">{{ job.age }}</span></td>
           <td style="display:flex;gap:8px;flex-wrap:wrap">
             <a class="btn btn-secondary btn-sm" href="/download/{{ job.id }}">&#11123; ZIP</a>
             <form action="/delete_job/{{ job.id }}" method="post" onsubmit="return confirm('Job {{ job.id }} l\u00f6schen?')" style="margin:0">
@@ -210,7 +219,47 @@ function toggleSrc(v){
 </body></html>
 """
 
+# ── Auto-cleanup background thread ──────────────────────────────────────────
+
+def cleanup_old_jobs():
+    """Runs every hour, deletes job folders older than JOB_MAX_AGE_DAYS."""
+    while True:
+        cutoff = datetime.now() - timedelta(days=JOB_MAX_AGE_DAYS)
+        for job_dir in OUTPUT_DIR.glob('job-*'):
+            if not job_dir.is_dir():
+                continue
+            meta = job_dir / 'meta.txt'
+            job_time = None
+            if meta.exists():
+                for line in meta.read_text(encoding='utf-8').splitlines():
+                    if line.startswith('created='):
+                        try:
+                            job_time = datetime.strptime(line.split('=', 1)[1], '%Y-%m-%d %H:%M:%S')
+                        except ValueError:
+                            pass
+            # fallback: use folder mtime
+            if job_time is None:
+                job_time = datetime.fromtimestamp(job_dir.stat().st_mtime)
+            if job_time < cutoff:
+                shutil.rmtree(job_dir, ignore_errors=True)
+        time.sleep(3600)  # check every hour
+
+_cleanup_thread = threading.Thread(target=cleanup_old_jobs, daemon=True)
+_cleanup_thread.start()
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+def job_age_label(created_str):
+    try:
+        created = datetime.strptime(created_str, '%Y-%m-%d %H:%M:%S')
+        delta = datetime.now() - created
+        days  = delta.days
+        hours = delta.seconds // 3600
+        if days >= 1:
+            return f'{days}d'
+        return f'{hours}h'
+    except Exception:
+        return '?'
 
 def gather_mp3s(base):
     return [p for p in base.rglob('*') if p.is_file() and p.suffix.lower() in ALLOWED_EXTENSIONS]
@@ -294,12 +343,14 @@ def list_jobs():
             if '=' in line:
                 k, v = line.split('=', 1)
                 data[k] = v
+        created = data.get('created', '')
         jobs.append({
             'id':        data.get('job_id', meta.parent.name),
-            'created':   data.get('created', ''),
+            'created':   created,
             'mode':      data.get('mode', ''),
             'count':     data.get('count', '0'),
             'target_db': data.get('target_db', '?'),
+            'age':       job_age_label(created),
         })
     return jobs
 
@@ -320,7 +371,8 @@ def index():
     return render_template_string(TEMPLATE,
         jobs=list_jobs(), analysis=None,
         input_dir=INPUT_DIR, port=APP_PORT,
-        default_target_db=DEFAULT_TARGET_DB)
+        default_target_db=DEFAULT_TARGET_DB,
+        max_age_days=JOB_MAX_AGE_DAYS)
 
 @app.route('/analyze', methods=['POST'])
 def analyze():
@@ -366,7 +418,8 @@ def analyze():
             jobs=list_jobs(),
             analysis={'session_id': session_id, 'files': results},
             input_dir=INPUT_DIR, port=APP_PORT,
-            default_target_db=DEFAULT_TARGET_DB)
+            default_target_db=DEFAULT_TARGET_DB,
+            max_age_days=JOB_MAX_AGE_DAYS)
     except Exception as e:
         shutil.rmtree(work_dir, ignore_errors=True)
         flash(f'Fehler bei Analyse: {e}', 'error')
@@ -419,7 +472,6 @@ def download(job_id):
 
 @app.route('/delete_job/<job_id>', methods=['POST'])
 def delete_job(job_id):
-    # Sicherheit: job_id darf nur alphanumerisch + Bindestrich sein
     if not re.fullmatch(r'job-[\w\-]+', job_id):
         flash('Ungueltiger Job-ID.', 'error')
         return redirect(url_for('index'))
