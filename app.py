@@ -7,17 +7,17 @@ import json
 import re
 from pathlib import Path
 from datetime import datetime
-from flask import Flask, request, redirect, url_for, render_template_string, send_file, flash, session, jsonify
+from flask import Flask, request, redirect, url_for, render_template_string, send_file, flash
 from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
 app.secret_key = 'mp3rgain-webui-secret-2024'
 app.config['MAX_CONTENT_LENGTH'] = int(os.environ.get('MAX_CONTENT_LENGTH', 2 * 1024 * 1024 * 1024))
 
-APP_PORT = int(os.environ.get('APP_PORT', '8099'))
-INPUT_DIR = Path(os.environ.get('INPUT_DIR', '/music/in'))
-OUTPUT_DIR = Path(os.environ.get('OUTPUT_DIR', '/music/out'))
-TEMP_DIR = Path(os.environ.get('TEMP_DIR', '/tmp/mp3rgain-jobs'))
+APP_PORT    = int(os.environ.get('APP_PORT', '8099'))
+INPUT_DIR   = Path(os.environ.get('INPUT_DIR',  '/music/in'))
+OUTPUT_DIR  = Path(os.environ.get('OUTPUT_DIR', '/music/out'))
+TEMP_DIR    = Path(os.environ.get('TEMP_DIR',   '/tmp/mp3rgain-jobs'))
 DEFAULT_TARGET_DB = int(os.environ.get('TARGET_DB', '101'))
 ALLOWED_EXTENSIONS = {'.mp3'}
 
@@ -38,17 +38,16 @@ TEMPLATE = """
     .hero{display:flex;justify-content:space-between;gap:16px;align-items:center;margin-bottom:24px;flex-wrap:wrap}
     .hero h1{margin:0;font-size:clamp(1.6rem,3vw,2.4rem)}.hero p{margin:.4rem 0 0;color:var(--muted)}
     .card{background:rgba(17,24,39,.9);border:1px solid var(--line);border-radius:var(--radius);padding:20px;box-shadow:0 10px 30px rgba(0,0,0,.3);margin-bottom:20px}
-    h2{margin:0 0 16px;font-size:1.1rem;display:flex;align-items:center;gap:8px}
+    h2{margin:0 0 16px;font-size:1.1rem}
     .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
     .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px}
     label{display:block;font-size:.9rem;color:#cbd5e1;margin-bottom:6px;font-weight:500}
-    input[type=text],input[type=number],select,textarea{width:100%;padding:11px 14px;border-radius:12px;border:1px solid var(--line);background:var(--panel2);color:var(--text);font-size:.95rem}
+    input[type=text],input[type=number],select{width:100%;padding:11px 14px;border-radius:12px;border:1px solid var(--line);background:var(--panel2);color:var(--text);font-size:.95rem}
     input[type=file]{width:100%;padding:12px;border:2px dashed #475569;border-radius:12px;background:#0b1220;color:var(--muted)}
     .btn{display:inline-flex;align-items:center;gap:6px;padding:11px 18px;border-radius:12px;border:none;font-weight:700;cursor:pointer;text-decoration:none;font-size:.95rem}
     .btn-primary{background:var(--primary);color:#042f2e}
     .btn-secondary{background:#334155;color:var(--text)}
     .btn-warn{background:var(--warn);color:#1c1917}
-    .btn-danger{background:var(--danger);color:#fff}
     .actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}
     .flash{padding:12px 16px;border-radius:12px;margin-bottom:14px;background:#172554;border:1px solid #3730a3}
     .flash.ok{background:#052e16;border-color:#166534}
@@ -73,22 +72,23 @@ TEMPLATE = """
 <body>
 <div class="wrap">
   <div class="hero">
-    <div><h1>&#127911; mp3rgain WebUI</h1><p>Verlustlose MP3-Lautstärkeanpassung &ndash; Analyse &rarr; Ziel setzen &rarr; Anwenden</p></div>
+    <div><h1>&#127911; mp3rgain WebUI</h1>
+    <p>Verlustlose MP3-Lautst&auml;rkeanpassung &ndash; Analyse &rarr; Ziel setzen &rarr; Anwenden</p></div>
     <div class="tag">Port {{ port }}</div>
   </div>
 
   {% with messages = get_flashed_messages(with_categories=true) %}
-    {% if messages %}{% for cat,msg in messages %}<div class="flash {{ cat }}">{{ msg }}</div>{% endfor %}{% endif %}
+    {% if messages %}{% for cat, msg in messages %}<div class="flash {{ cat }}">{{ msg }}</div>{% endfor %}{% endif %}
   {% endwith %}
 
-  <!-- SCHRITT 1: ANALYSE -->
+  <!-- SCHRITT 1 -->
   <div class="card">
     <div class="step-header"><div class="step-num">1</div><h2 style="margin:0">Dateien analysieren</h2></div>
     <form action="/analyze" method="post" enctype="multipart/form-data">
       <div class="grid2">
         <div>
           <label>Quelle</label>
-          <select name="source_type" id="src" onchange="toggleSrc(this.value)">
+          <select name="source_type" onchange="toggleSrc(this.value)">
             <option value="mounted">Gemounteter Eingabeordner</option>
             <option value="upload">Datei-Upload</option>
           </select>
@@ -108,24 +108,27 @@ TEMPLATE = """
     </form>
   </div>
 
-  <!-- SCHRITT 2: ERGEBNIS + ANWENDEN -->
+  <!-- SCHRITT 2 -->
   {% if analysis %}
   <div class="card">
     <div class="step-header"><div class="step-num">2</div><h2 style="margin:0">Analyseergebnis &amp; Ziel festlegen</h2></div>
     <table>
-      <thead><tr><th>Datei</th><th>Ist-Lautstärke</th><th>Diff zu Ziel</th><th>Clipping?</th></tr></thead>
+      <thead><tr><th>Datei</th><th>Ist-Lautst&auml;rke</th><th>Diff zu Ziel ({{ default_target_db }} dB)</th><th>Clipping?</th></tr></thead>
       <tbody>
         {% for f in analysis.files %}
         <tr>
           <td><code>{{ f.name }}</code></td>
           <td>
-            {{ f.db }} dB
-            <span class="db-bar-wrap"><span class="db-bar" style="width:{{ [[(f.db|float) / 110 * 100, 0]|max, 100]|min }}%"></span></span>
+            {% if f.db != '?' %}{{ f.db }} dB
+              <span class="db-bar-wrap"><span class="db-bar" style="width:{{ f.bar_pct }}%"></span></span>
+            {% else %}<span class="badge badge-muted">?</span>{% endif %}
           </td>
           <td>
-            {% if f.diff > 0 %}<span class="badge badge-warn">+{{ f.diff }} dB</span>
-            {% elif f.diff < 0 %}<span class="badge badge-ok">{{ f.diff }} dB</span>
-            {% else %}<span class="badge badge-muted">= Ziel</span>{% endif %}
+            {% if f.diff_num is not none %}
+              {% if f.diff_num > 0 %}<span class="badge badge-warn">+{{ f.diff }} dB</span>
+              {% elif f.diff_num < 0 %}<span class="badge badge-ok">{{ f.diff }} dB</span>
+              {% else %}<span class="badge badge-muted">=Ziel</span>{% endif %}
+            {% else %}<span class="badge badge-muted">?</span>{% endif %}
           </td>
           <td>{% if f.clipping %}<span class="badge badge-warn">&#9888; Ja</span>{% else %}<span class="badge badge-muted">Nein</span>{% endif %}</td>
         </tr>
@@ -139,14 +142,14 @@ TEMPLATE = """
         <div>
           <label>Ziel-dB</label>
           <input type="number" name="target_db" value="{{ default_target_db }}" min="60" max="120" required>
-          <p class="hint">Standard: {{ default_target_db }} dB (via TARGET_DB)</p>
+          <p class="hint">Standard {{ default_target_db }} dB &bull; erlaubt 60&ndash;120</p>
         </div>
         <div>
           <label>Modus</label>
           <select name="mode">
             <option value="track">Track Gain &ndash; jede Datei einzeln</option>
             <option value="album">Album Gain &ndash; alle als Album</option>
-            <option value="undo">Undo &ndash; Rückgängig machen</option>
+            <option value="undo">Undo &ndash; R&uuml;ckg&auml;ngig</option>
           </select>
         </div>
         <div style="display:flex;flex-direction:column;justify-content:flex-end">
@@ -160,7 +163,7 @@ TEMPLATE = """
   </div>
   {% endif %}
 
-  <!-- ERGEBNISSE -->
+  <!-- JOBS -->
   <div class="card">
     <h2>&#128230; Abgeschlossene Jobs</h2>
     {% if jobs %}
@@ -183,76 +186,82 @@ TEMPLATE = """
 </div>
 <script>
 function toggleSrc(v){
-  document.getElementById('box-subdir').style.display=v==='mounted'?'block':'none';
-  document.getElementById('box-upload').style.display=v==='upload'?'block':'none';
+  document.getElementById('box-subdir').style.display = v==='mounted' ? 'block' : 'none';
+  document.getElementById('box-upload').style.display = v==='upload'  ? 'block' : 'none';
 }
 </script>
 </body></html>
 """
 
-# ── Helpers ──────────────────────────────────────────────────────────────────
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
 def gather_mp3s(base):
     return [p for p in base.rglob('*') if p.is_file() and p.suffix.lower() in ALLOWED_EXTENSIONS]
 
-def analyze_files(files):
-    """Run mp3rgain -s s (show info only, no changes) and parse output."""
+def analyze_files(files, target_db):
     results = []
     for f in files:
+        db_val  = None
+        clipping = False
         try:
             out = subprocess.run(
                 ['mp3rgain', '-s', 's', str(f)],
-                capture_output=True, text=True
+                capture_output=True, text=True, timeout=30
             )
             combined = out.stdout + out.stderr
-            db_val = None
-            clipping = False
-            # mp3rgain outputs lines like: filename\tMP3 gain\tdB gain\tmax amplitude\tmax global_gain\tmin global_gain
             for line in combined.splitlines():
-                if str(f.name) in line or str(f) in line:
+                if f.name in line or str(f) in line:
                     parts = line.split('\t')
                     if len(parts) >= 3:
                         try:
                             db_val = round(float(parts[2]), 1)
                         except ValueError:
                             pass
-                if 'clipping' in line.lower() or 'clip' in line.lower():
+                if 'clipping' in line.lower():
                     clipping = True
-            # fallback: try regex
             if db_val is None:
                 m = re.search(r'([\-\d\.]+)\s*dB', combined)
                 if m:
-                    db_val = round(float(m.group(1)), 1)
-            results.append({
-                'name': f.name,
-                'path': str(f),
-                'db': db_val if db_val is not None else '?',
-                'clipping': clipping,
-                'diff': '?'
-            })
-        except Exception as e:
-            results.append({'name': f.name, 'path': str(f), 'db': '?', 'clipping': False, 'diff': '?'})
-    return results
+                    try:
+                        db_val = round(float(m.group(1)), 1)
+                    except ValueError:
+                        pass
+        except Exception:
+            pass
 
-def compute_diffs(results, target_db):
-    for r in results:
-        try:
-            r['diff'] = round(target_db - float(r['db']), 1)
-        except (TypeError, ValueError):
-            r['diff'] = '?'
+        # safe diff + bar – computed in Python, not Jinja2
+        if db_val is not None:
+            diff_num = round(target_db - db_val, 1)
+            bar_pct  = max(0, min(100, round(db_val / 110 * 100)))
+            db_str   = str(db_val)
+        else:
+            diff_num = None
+            bar_pct  = 0
+            db_str   = '?'
+
+        results.append({
+            'name':     f.name,
+            'path':     str(f),
+            'db':       db_str,
+            'bar_pct':  bar_pct,
+            'diff':     str(diff_num) if diff_num is not None else '?',
+            'diff_num': diff_num,
+            'clipping': clipping,
+        })
     return results
 
 def run_mp3rgain(mode, files, target_db):
     cmd = ['mp3rgain', f'-d{target_db}']
-    if mode == 'track': cmd.append('-r')
+    if mode == 'track':   cmd.append('-r')
     elif mode == 'album': cmd.append('-a')
-    elif mode == 'undo': cmd.append('-u')
+    elif mode == 'undo':  cmd.append('-u')
     cmd.extend(str(f) for f in files)
     subprocess.run(cmd, check=True)
 
 def write_meta(job_dir, job_id, mode, count, target_db):
     (job_dir / 'meta.txt').write_text(
-        f'job_id={job_id}\ncreated={datetime.now().strftime("%Y-%m-%d %H:%M:%S")}\nmode={mode}\ncount={count}\ntarget_db={target_db}\n',
+        f'job_id={job_id}\ncreated={datetime.now().strftime("%Y-%m-%d %H:%M:%S")}\n'
+        f'mode={mode}\ncount={count}\ntarget_db={target_db}\n',
         encoding='utf-8')
 
 def zip_dir(src, dest):
@@ -269,14 +278,14 @@ def list_jobs():
             if '=' in line:
                 k, v = line.split('=', 1)
                 data[k] = v
-        jobs.append({'id': data.get('job_id', meta.parent.name),
-                     'created': data.get('created', ''),
-                     'mode': data.get('mode', ''),
-                     'count': data.get('count', '0'),
-                     'target_db': data.get('target_db', '?')})
+        jobs.append({
+            'id':        data.get('job_id', meta.parent.name),
+            'created':   data.get('created', ''),
+            'mode':      data.get('mode', ''),
+            'count':     data.get('count', '0'),
+            'target_db': data.get('target_db', '?'),
+        })
     return jobs
-
-# ── Session-based temp file store ─────────────────────────────────────────────
 
 def save_session_files(session_id, file_paths):
     p = TEMP_DIR / f'session-{session_id}.json'
@@ -300,53 +309,60 @@ def index():
 @app.route('/analyze', methods=['POST'])
 def analyze():
     source_type = request.form.get('source_type', 'mounted')
-    session_id = uuid.uuid4().hex
-    work_dir = TEMP_DIR / f'session-{session_id}-files'
+    session_id  = uuid.uuid4().hex
+    work_dir    = TEMP_DIR / f'session-{session_id}-files'
     work_dir.mkdir(parents=True, exist_ok=True)
 
-    if source_type == 'mounted':
-        subdir = (request.form.get('subdir') or '').strip().strip('/')
-        source = (INPUT_DIR / subdir if subdir else INPUT_DIR).resolve()
-        if not str(source).startswith(str(INPUT_DIR.resolve())) or not source.exists():
-            flash('Ungueltiger Eingabepfad.', 'error')
-            return redirect(url_for('index'))
-        src_files = gather_mp3s(source)
-        if not src_files:
-            flash('Keine MP3-Dateien gefunden.', 'error')
-            return redirect(url_for('index'))
-        for f in src_files:
-            rel = f.relative_to(source)
-            dest = work_dir / rel
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(f, dest)
-    else:
-        uploads = request.files.getlist('files')
-        saved = 0
-        for up in uploads:
-            if not up or not up.filename: continue
-            name = secure_filename(Path(up.filename).name)
-            if Path(name).suffix.lower() not in ALLOWED_EXTENSIONS: continue
-            up.save(work_dir / name)
-            saved += 1
-        if saved == 0:
-            flash('Keine gueltigen MP3-Dateien hochgeladen.', 'error')
-            return redirect(url_for('index'))
+    try:
+        if source_type == 'mounted':
+            subdir = (request.form.get('subdir') or '').strip().strip('/')
+            source = (INPUT_DIR / subdir if subdir else INPUT_DIR).resolve()
+            if not str(source).startswith(str(INPUT_DIR.resolve())) or not source.exists():
+                flash('Ungueltiger Eingabepfad.', 'error')
+                return redirect(url_for('index'))
+            src_files = gather_mp3s(source)
+            if not src_files:
+                flash('Keine MP3-Dateien gefunden.', 'error')
+                return redirect(url_for('index'))
+            for f in src_files:
+                rel  = f.relative_to(source)
+                dest = work_dir / rel
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(f, dest)
+        else:
+            uploads = request.files.getlist('files')
+            saved   = 0
+            for up in uploads:
+                if not up or not up.filename:
+                    continue
+                name = secure_filename(Path(up.filename).name)
+                if Path(name).suffix.lower() not in ALLOWED_EXTENSIONS:
+                    continue
+                up.save(work_dir / name)
+                saved += 1
+            if saved == 0:
+                flash('Keine gueltigen MP3-Dateien hochgeladen.', 'error')
+                return redirect(url_for('index'))
 
-    files = gather_mp3s(work_dir)
-    results = analyze_files(files)
-    results = compute_diffs(results, DEFAULT_TARGET_DB)
-    save_session_files(session_id, [r['path'] for r in results])
+        files   = gather_mp3s(work_dir)
+        results = analyze_files(files, DEFAULT_TARGET_DB)
+        save_session_files(session_id, [r['path'] for r in results])
 
-    analysis = {'session_id': session_id, 'files': results}
-    return render_template_string(TEMPLATE,
-        jobs=list_jobs(), analysis=analysis,
-        input_dir=INPUT_DIR, port=APP_PORT,
-        default_target_db=DEFAULT_TARGET_DB)
+        return render_template_string(TEMPLATE,
+            jobs=list_jobs(),
+            analysis={'session_id': session_id, 'files': results},
+            input_dir=INPUT_DIR, port=APP_PORT,
+            default_target_db=DEFAULT_TARGET_DB)
+
+    except Exception as e:
+        shutil.rmtree(work_dir, ignore_errors=True)
+        flash(f'Fehler bei Analyse: {e}', 'error')
+        return redirect(url_for('index'))
 
 @app.route('/apply', methods=['POST'])
 def apply():
     session_id = request.form.get('session_id', '')
-    mode = request.form.get('mode', 'track')
+    mode       = request.form.get('mode', 'track')
     try:
         target_db = int(request.form.get('target_db') or DEFAULT_TARGET_DB)
         target_db = max(60, min(120, target_db))
@@ -355,16 +371,16 @@ def apply():
 
     files = load_session_files(session_id)
     if not files:
-        flash('Session abgelaufen oder nicht gefunden. Bitte erneut analysieren.', 'error')
+        flash('Session abgelaufen – bitte erneut analysieren.', 'error')
         return redirect(url_for('index'))
 
-    job_id = f'job-{datetime.now().strftime("%Y%m%d-%H%M%S")}-{uuid.uuid4().hex[:6]}'
+    job_id  = f'job-{datetime.now().strftime("%Y%m%d-%H%M%S")}-{uuid.uuid4().hex[:6]}'
     job_dir = OUTPUT_DIR / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
 
     try:
         run_mp3rgain(mode, files, target_db)
-        src_dir = Path(files[0]).parent
+        src_dir   = Path(files[0]).parent
         out_files = job_dir / 'files'
         shutil.copytree(src_dir, out_files, dirs_exist_ok=True)
         write_meta(job_dir, job_id, mode, len(files), target_db)
@@ -377,7 +393,8 @@ def apply():
     finally:
         shutil.rmtree(TEMP_DIR / f'session-{session_id}-files', ignore_errors=True)
         sess_json = TEMP_DIR / f'session-{session_id}.json'
-        if sess_json.exists(): sess_json.unlink()
+        if sess_json.exists():
+            sess_json.unlink()
 
     return redirect(url_for('index'))
 
