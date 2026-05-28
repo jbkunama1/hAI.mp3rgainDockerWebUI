@@ -1,5 +1,9 @@
 # hAI.mp3rgainDockerWebUI 🎧🟢
 
+![Banner](banner_mp3gain.png)
+
+<p align="center"><img src="logo_mp3gainUI.png" alt="mp3rgain WebUI Logo" width="120"/></p>
+
 ![Language](https://img.shields.io/badge/Language-Deutsch-green?style=for-the-badge)
 ![mp3rgain](https://img.shields.io/badge/Tool-mp3rgain-0ea5e9?style=for-the-badge)
 ![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?style=for-the-badge&logo=docker&logoColor=white)
@@ -145,6 +149,8 @@ hAI.mp3rgainDockerWebUI/
 ├── app.py               # Flask WebUI
 ├── Dockerfile           # Docker Image Definition
 ├── docker-compose.yml   # Portainer Stack
+├── logo_mp3gainUI.png   # App-Logo
+├── banner_mp3gain.png   # Banner
 ├── README.md            # Diese Datei (DE)
 └── README_en.md         # English version
 ```

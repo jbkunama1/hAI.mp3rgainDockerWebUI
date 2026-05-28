@@ -38,7 +38,11 @@ TEMPLATE = """
     :root{--bg:#0f172a;--panel:#111827;--panel2:#1f2937;--text:#e5e7eb;--muted:#94a3b8;--line:#334155;--primary:#14b8a6;--warn:#f59e0b;--danger:#ef4444;--radius:16px}
     *{box-sizing:border-box}body{margin:0;font-family:Inter,Arial,sans-serif;background:linear-gradient(180deg,#020617,#0f172a);color:var(--text)}
     .wrap{max-width:1200px;margin:0 auto;padding:24px}
+    .banner{width:100%;border-radius:var(--radius);overflow:hidden;margin-bottom:24px;box-shadow:0 8px 32px rgba(0,0,0,.4)}
+    .banner img{width:100%;display:block;height:auto}
     .hero{display:flex;justify-content:space-between;gap:16px;align-items:center;margin-bottom:24px;flex-wrap:wrap}
+    .hero-left{display:flex;align-items:center;gap:16px}
+    .hero-logo{width:56px;height:56px;border-radius:12px;object-fit:cover;flex-shrink:0}
     .hero h1{margin:0;font-size:clamp(1.6rem,3vw,2.4rem)}.hero p{margin:.4rem 0 0;color:var(--muted)}
     .card{background:rgba(17,24,39,.9);border:1px solid var(--line);border-radius:var(--radius);padding:20px;box-shadow:0 10px 30px rgba(0,0,0,.3);margin-bottom:20px}
     h2{margin:0 0 16px;font-size:1.1rem}
@@ -84,9 +88,21 @@ TEMPLATE = """
 </head>
 <body>
 <div class="wrap">
+
+  <!-- BANNER -->
+  <div class="banner">
+    <img src="/static/banner_mp3gain.png" alt="mp3rgain WebUI Banner">
+  </div>
+
+  <!-- HERO -->
   <div class="hero">
-    <div><h1>&#127911; mp3rgain WebUI</h1>
-    <p>Verlustlose MP3-Lautst&auml;rkeanpassung &ndash; Analyse &rarr; Ziel setzen &rarr; Anwenden</p></div>
+    <div class="hero-left">
+      <img class="hero-logo" src="/static/logo_mp3gainUI.png" alt="Logo">
+      <div>
+        <h1>&#127911; mp3rgain WebUI</h1>
+        <p>Verlustlose MP3-Lautst&auml;rkeanpassung &ndash; Analyse &rarr; Ziel setzen &rarr; Anwenden</p>
+      </div>
+    </div>
     <div class="tag">Port {{ port }}</div>
   </div>
 
@@ -233,6 +249,16 @@ function toggleSrc(v){
 </body></html>
 """
 
+# ── Static files: serve logo & banner from repo root ────────────────────────────
+
+from flask import send_from_directory
+
+APP_ROOT = Path(__file__).parent
+
+@app.route('/static/<path:filename>')
+def static_files(filename):
+    return send_from_directory(APP_ROOT, filename)
+
 # ── Auto-cleanup background thread ──────────────────────────────────────────
 
 def cleanup_old_jobs():
@@ -251,12 +277,11 @@ def cleanup_old_jobs():
                             job_time = datetime.strptime(line.split('=', 1)[1], '%Y-%m-%d %H:%M:%S')
                         except ValueError:
                             pass
-            # fallback: use folder mtime
             if job_time is None:
                 job_time = datetime.fromtimestamp(job_dir.stat().st_mtime)
             if job_time < cutoff:
                 shutil.rmtree(job_dir, ignore_errors=True)
-        time.sleep(3600)  # check every hour
+        time.sleep(3600)
 
 _cleanup_thread = threading.Thread(target=cleanup_old_jobs, daemon=True)
 _cleanup_thread.start()
@@ -360,7 +385,6 @@ def list_jobs():
         created = data.get('created', '')
         job_id  = data.get('job_id', meta.parent.name)
 
-        # Dateinamen aus dem files/-Unterordner auslesen
         files_dir  = meta.parent / 'files'
         file_names = sorted([f.name for f in files_dir.rglob('*.mp3')]) if files_dir.exists() else []
 
