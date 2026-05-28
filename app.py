@@ -48,9 +48,12 @@ TEMPLATE = """
     .btn-primary{background:var(--primary);color:#042f2e}
     .btn-secondary{background:#334155;color:var(--text)}
     .btn-warn{background:var(--warn);color:#1c1917}
+    .btn-danger{background:var(--danger);color:#fff}
+    .btn-sm{padding:5px 11px;font-size:.82rem;border-radius:9px}
     .actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}
     .flash{padding:12px 16px;border-radius:12px;margin-bottom:14px;background:#172554;border:1px solid #3730a3}
     .flash.ok{background:#052e16;border-color:#166534}
+    .flash.error{background:#450a0a;border-color:#991b1b}
     table{width:100%;border-collapse:collapse}
     th,td{padding:10px 8px;border-bottom:1px solid #1e2d3d;text-align:left;font-size:.9rem;vertical-align:middle}
     th{color:var(--muted);font-weight:600;font-size:.82rem;text-transform:uppercase;letter-spacing:.05em}
@@ -66,6 +69,8 @@ TEMPLATE = """
     .step-header{display:flex;align-items:center;gap:12px;margin-bottom:16px}
     .step-num{width:28px;height:28px;border-radius:50%;background:var(--primary);color:#042f2e;font-weight:800;display:flex;align-items:center;justify-content:center;font-size:.9rem;flex-shrink:0}
     .hint{font-size:.85rem;color:var(--muted);margin-top:4px}
+    .jobs-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
+    .jobs-header h2{margin:0}
     @media(max-width:800px){.grid2,.grid3{grid-template-columns:1fr}}
   </style>
 </head>
@@ -165,10 +170,17 @@ TEMPLATE = """
 
   <!-- JOBS -->
   <div class="card">
-    <h2>&#128230; Abgeschlossene Jobs</h2>
+    <div class="jobs-header">
+      <h2>&#128230; Abgeschlossene Jobs</h2>
+      {% if jobs %}
+      <form action="/delete_all_jobs" method="post" onsubmit="return confirm('Wirklich alle Jobs l\u00f6schen?')">
+        <button class="btn btn-danger btn-sm" type="submit">&#128465; Alle l&ouml;schen</button>
+      </form>
+      {% endif %}
+    </div>
     {% if jobs %}
     <table>
-      <thead><tr><th>Zeit</th><th>Modus</th><th>Ziel-dB</th><th>Dateien</th><th>Download</th></tr></thead>
+      <thead><tr><th>Zeit</th><th>Modus</th><th>Ziel-dB</th><th>Dateien</th><th>Aktionen</th></tr></thead>
       <tbody>
         {% for job in jobs %}
         <tr>
@@ -176,7 +188,12 @@ TEMPLATE = """
           <td><span class="badge badge-muted">{{ job.mode }}</span></td>
           <td><code>{{ job.target_db }} dB</code></td>
           <td>{{ job.count }}</td>
-          <td><a class="btn btn-secondary" style="padding:6px 12px;font-size:.85rem" href="/download/{{ job.id }}">&#11123; ZIP</a></td>
+          <td style="display:flex;gap:8px;flex-wrap:wrap">
+            <a class="btn btn-secondary btn-sm" href="/download/{{ job.id }}">&#11123; ZIP</a>
+            <form action="/delete_job/{{ job.id }}" method="post" onsubmit="return confirm('Job {{ job.id }} l\u00f6schen?')" style="margin:0">
+              <button class="btn btn-danger btn-sm" type="submit">&#128465;</button>
+            </form>
+          </td>
         </tr>
         {% endfor %}
       </tbody>
@@ -201,7 +218,7 @@ def gather_mp3s(base):
 def analyze_files(files, target_db):
     results = []
     for f in files:
-        db_val  = None
+        db_val   = None
         clipping = False
         try:
             out = subprocess.run(
@@ -229,7 +246,6 @@ def analyze_files(files, target_db):
         except Exception:
             pass
 
-        # safe diff + bar – computed in Python, not Jinja2
         if db_val is not None:
             diff_num = round(target_db - db_val, 1)
             bar_pct  = max(0, min(100, round(db_val / 110 * 100)))
@@ -312,7 +328,6 @@ def analyze():
     session_id  = uuid.uuid4().hex
     work_dir    = TEMP_DIR / f'session-{session_id}-files'
     work_dir.mkdir(parents=True, exist_ok=True)
-
     try:
         if source_type == 'mounted':
             subdir = (request.form.get('subdir') or '').strip().strip('/')
@@ -347,13 +362,11 @@ def analyze():
         files   = gather_mp3s(work_dir)
         results = analyze_files(files, DEFAULT_TARGET_DB)
         save_session_files(session_id, [r['path'] for r in results])
-
         return render_template_string(TEMPLATE,
             jobs=list_jobs(),
             analysis={'session_id': session_id, 'files': results},
             input_dir=INPUT_DIR, port=APP_PORT,
             default_target_db=DEFAULT_TARGET_DB)
-
     except Exception as e:
         shutil.rmtree(work_dir, ignore_errors=True)
         flash(f'Fehler bei Analyse: {e}', 'error')
@@ -377,7 +390,6 @@ def apply():
     job_id  = f'job-{datetime.now().strftime("%Y%m%d-%H%M%S")}-{uuid.uuid4().hex[:6]}'
     job_dir = OUTPUT_DIR / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
-
     try:
         run_mp3rgain(mode, files, target_db)
         src_dir   = Path(files[0]).parent
@@ -395,7 +407,6 @@ def apply():
         sess_json = TEMP_DIR / f'session-{session_id}.json'
         if sess_json.exists():
             sess_json.unlink()
-
     return redirect(url_for('index'))
 
 @app.route('/download/<job_id>')
@@ -405,6 +416,30 @@ def download(job_id):
         flash('ZIP nicht gefunden.', 'error')
         return redirect(url_for('index'))
     return send_file(zip_path, as_attachment=True, download_name=zip_path.name)
+
+@app.route('/delete_job/<job_id>', methods=['POST'])
+def delete_job(job_id):
+    # Sicherheit: job_id darf nur alphanumerisch + Bindestrich sein
+    if not re.fullmatch(r'job-[\w\-]+', job_id):
+        flash('Ungueltiger Job-ID.', 'error')
+        return redirect(url_for('index'))
+    job_dir = OUTPUT_DIR / job_id
+    if job_dir.exists() and job_dir.is_dir():
+        shutil.rmtree(job_dir)
+        flash(f'Job {job_id} geloescht.', 'ok')
+    else:
+        flash('Job nicht gefunden.', 'error')
+    return redirect(url_for('index'))
+
+@app.route('/delete_all_jobs', methods=['POST'])
+def delete_all_jobs():
+    deleted = 0
+    for job_dir in OUTPUT_DIR.glob('job-*'):
+        if job_dir.is_dir():
+            shutil.rmtree(job_dir)
+            deleted += 1
+    flash(f'{deleted} Job(s) geloescht.', 'ok')
+    return redirect(url_for('index'))
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=APP_PORT)
