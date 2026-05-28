@@ -9,10 +9,10 @@ import threading
 import time
 from pathlib import Path
 from datetime import datetime, timedelta
-from flask import Flask, request, redirect, url_for, render_template_string, send_file, flash
+from flask import Flask, request, redirect, url_for, render_template_string, send_file, send_from_directory, flash
 from werkzeug.utils import secure_filename
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder=None)  # Flask internen /static/-Handler deaktivieren
 app.secret_key = 'mp3rgain-webui-secret-2024'
 app.config['MAX_CONTENT_LENGTH'] = int(os.environ.get('MAX_CONTENT_LENGTH', 2 * 1024 * 1024 * 1024))
 
@@ -23,6 +23,7 @@ TEMP_DIR          = Path(os.environ.get('TEMP_DIR',   '/tmp/mp3rgain-jobs'))
 DEFAULT_TARGET_DB = int(os.environ.get('TARGET_DB',   '101'))
 JOB_MAX_AGE_DAYS  = int(os.environ.get('JOB_MAX_AGE_DAYS', '7'))
 ALLOWED_EXTENSIONS = {'.mp3'}
+APP_ROOT = Path(__file__).parent
 
 for p in (INPUT_DIR, OUTPUT_DIR, TEMP_DIR):
     p.mkdir(parents=True, exist_ok=True)
@@ -91,13 +92,13 @@ TEMPLATE = """
 
   <!-- BANNER -->
   <div class="banner">
-    <img src="/static/banner_mp3gain.png" alt="mp3rgain WebUI Banner">
+    <img src="/assets/banner_mp3gain.png" alt="mp3rgain WebUI Banner">
   </div>
 
   <!-- HERO -->
   <div class="hero">
     <div class="hero-left">
-      <img class="hero-logo" src="/static/logo_mp3gainUI.png" alt="Logo">
+      <img class="hero-logo" src="/assets/logo_mp3gainUI.png" alt="Logo">
       <div>
         <h1>&#127911; mp3rgain WebUI</h1>
         <p>Verlustlose MP3-Lautst&auml;rkeanpassung &ndash; Analyse &rarr; Ziel setzen &rarr; Anwenden</p>
@@ -249,14 +250,10 @@ function toggleSrc(v){
 </body></html>
 """
 
-# ── Static files: serve logo & banner from repo root ────────────────────────────
+# ── Assets-Route (PNG-Dateien aus /app/) ─────────────────────────────────────
 
-from flask import send_from_directory
-
-APP_ROOT = Path(__file__).parent
-
-@app.route('/static/<path:filename>')
-def static_files(filename):
+@app.route('/assets/<path:filename>')
+def assets(filename):
     return send_from_directory(APP_ROOT, filename)
 
 # ── Auto-cleanup background thread ──────────────────────────────────────────
