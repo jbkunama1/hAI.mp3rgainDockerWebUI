@@ -1,5 +1,9 @@
 # hAI.mp3rgainDockerWebUI 🎧🟢
 
+<a href="https://www.buymeacoffee.com/highfish">
+<img src="https://cdn.buymeacoffee.com/buttons/default-orange.png" alt="Buy Me A Coffee" height="41" width="174">
+</a>
+
 ![Banner](banner_mp3gain.png)
 
 <p align="center"><img src="logo_mp3gainUI.png" alt="mp3rgain WebUI Logo" width="120"/></p>
@@ -172,3 +176,4 @@ MIT
 ---
 
 > 📖 English version: [README_en.md](README_en.md)
+
