@@ -8,12 +8,12 @@
 
 <p align="center"><img src="logo_mp3gainUI.png" alt="mp3rgain WebUI Logo" width="120"/></p>
 
-![Language](https://img.shields.io/badge/Language-Deutsch-green?style=for-the-badge)
-![mp3rgain](https://img.shields.io/badge/Tool-mp3rgain-0ea5e9?style=for-the-badge)
-![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?style=for-the-badge&logo=docker&logoColor=white)
-![Flask](https://img.shields.io/badge/WebUI-Flask-black?style=for-the-badge&logo=flask&logoColor=white)
-![Status](https://img.shields.io/badge/Status-Experimental-f97316?style=for-the-badge)
-![License](https://img.shields.io/badge/License-MIT-slateblue?style=for-the-badge)
+[![Language](https://img.shields.io/badge/Language-Deutsch-green?style=for-the-badge)](https://github.com/jbkunama1/hAI.mp3rgainDockerWebUI)
+[![mp3rgain](https://img.shields.io/badge/Tool-mp3rgain-0ea5e9?style=for-the-badge)](https://github.com/jbkunama1/hAI.mp3rgainDockerWebUI)
+[![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://github.com/jbkunama1/hAI.mp3rgainDockerWebUI)
+[![Flask](https://img.shields.io/badge/WebUI-Flask-black?style=for-the-badge&logo=flask&logoColor=white)](https://github.com/jbkunama1/hAI.mp3rgainDockerWebUI)
+[![Status](https://img.shields.io/badge/Status-Experimental-f97316?style=for-the-badge)](https://github.com/jbkunama1/hAI.mp3rgainDockerWebUI)
+[![License](https://img.shields.io/badge/License-MIT-slateblue?style=for-the-badge)](https://github.com/jbkunama1/hAI.mp3rgainDockerWebUI)
 
 > 🪄 **Verlustfreie** Lautstärke-Normierung für MP3 – als WebUI im Browser, lauffähig als Portainer-Stack mit Docker.
 
@@ -176,4 +176,3 @@ MIT
 ---
 
 > 📖 English version: [README_en.md](README_en.md)
-
